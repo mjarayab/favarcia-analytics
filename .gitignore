@@ -1,0 +1,10 @@
+data/raw/*.xlsx
+data/raw/*.csv
+data/raw/*.xls
+outputs/*.png
+venv/
+__pycache__/
+*.pyc
+.DS_Store
+*.xlsx~
+data/sample/*.xlsx
