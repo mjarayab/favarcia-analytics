@@ -39,7 +39,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 #            guarda outputs en outputs/
 #            usar cuando IT entregue el reporte
 #
-MODO = "demo"   # ← CAMBIAR A "real" cuando lleguen datos de IT
+MODO = "real"   # ← CAMBIAR A "real" cuando lleguen datos de IT
 # ──────────────────────────────────────────────────────────
 
 if MODO == "demo":
@@ -164,94 +164,90 @@ def preparar_datos(df):
     print("\n" + "="*50)
     print("PREPARACIÓN DE DATOS")
     print("="*50)
-    
+
     # ── 4.1 Estandarizar nombres de columnas ──────────
-    # Convierte a minúsculas y reemplaza espacios con guiones bajos
-    # Así evitas errores de tipeo (ej: "Cant Lineas" vs "cant_lineas")
     df.columns = (df.columns
-                  .str.lower()           # todo a minúsculas
-                  .str.strip()           # quita espacios al inicio/fin
-                  .str.replace(' ', '_') # espacios → guiones bajos
-                  .str.replace('.', '_') # puntos → guiones bajos
+                  .str.lower()
+                  .str.strip()
+                  .str.replace(' ', '_')
+                  .str.replace('.', '_')
+                  .str.replace('(', '')
+                  .str.replace(')', '')
                   )
     print("✅ Nombres de columnas estandarizados")
     print(f"   Columnas ahora: {list(df.columns)}")
-    
-    # ── 4.2 Convertir tiempo a segundos (columna calculada) ──────────
-    # El reporte de Favarcia muestra tiempo como "1:00:45.97" (hh:mm:ss)
-    # Necesitamos convertirlo a segundos para hacer matemáticas.
-    #
-    # AJUSTA 'tiempo' al nombre real de la columna de tiempo en tu reporte.
-    
-    if 'tiempo' in df.columns:
-        def tiempo_a_segundos(t):
-            """Convierte '1:00:45.97' o '0:45.30' a segundos totales"""
-            try:
-                t_str = str(t).strip()
-                partes = t_str.split(':')
-                
-                if len(partes) == 3:
-                    # formato hh:mm:ss
-                    horas = float(partes[0])
-                    minutos = float(partes[1])
-                    segundos = float(partes[2])
-                elif len(partes) == 2:
-                    # formato mm:ss
-                    horas = 0
-                    minutos = float(partes[0])
-                    segundos = float(partes[1])
-                else:
-                    return np.nan
-                    
-                return horas * 3600 + minutos * 60 + segundos
-            except:
-                return np.nan  # Si no puede convertir, deja vacío
-        
-        # Aplica la función a cada fila de la columna tiempo
-        # .apply() es como arrastrar una fórmula en Excel
-        df['tiempo_segundos'] = df['tiempo'].apply(tiempo_a_segundos)
-        df['tiempo_minutos'] = df['tiempo_segundos'] / 60
-        print("✅ Tiempo convertido a segundos y minutos")
-    
-    # ── 4.3 Columna clave: segundos por línea ──────────
-    # Esta es la métrica más importante del análisis.
-    # Normaliza el tiempo por complejidad del pedido.
-    #
-    # AJUSTA 'cant_lineas' al nombre real en tu reporte.
-    
-    if 'tiempo_segundos' in df.columns and 'cant_lineas' in df.columns:
-        # Divide tiempo entre líneas, pero evita división por cero
-        # np.where(condición, valor_si_true, valor_si_false)
-        df['seg_por_linea'] = np.where(
-            df['cant_lineas'] > 0,                    # condición: líneas > 0
-            df['tiempo_segundos'] / df['cant_lineas'], # si true: dividir
-            np.nan                                     # si false: dejar vacío
-        )
-        print("✅ Calculado: segundos por línea")
-        
-        # Resumen rápido de esta métrica
-        print(f"\n   seg/línea — Promedio: {df['seg_por_linea'].mean():.1f}s")
-        print(f"   seg/línea — Mediana:  {df['seg_por_linea'].median():.1f}s")
-        print(f"   seg/línea — Mínimo:   {df['seg_por_linea'].min():.1f}s")
-        print(f"   seg/línea — Máximo:   {df['seg_por_linea'].max():.1f}s")
-    
-    # ── 4.4 Convertir fechas si existen ──────────
-    # AJUSTA 'fecha' al nombre real de la columna de fecha.
-    
-    if 'fecha' in df.columns:
-        df['fecha'] = pd.to_datetime(df['fecha'], dayfirst=True, errors='coerce')
-        df['dia_semana'] = df['fecha'].dt.day_name()  # Lunes, Martes, etc.
-        print("✅ Fechas procesadas — columna 'dia_semana' creada")
 
-    # Extraer hora de hora_inicio (no de fecha — fecha no tiene hora)
-    # hora_inicio es una columna separada en formato "HH:MM:SS"
+    # ── 4.2 Renombrar columnas reales a nombres estándar ──────────
+    # Mapeo de columnas reales de Favarcia → nombres internos del análisis
+    mapeo = {
+        'alistador':              'picker_id',
+        'tiempo_alisto_minutos':  'tiempo_minutos',
+        'inicio_alisto':          'hora_inicio',
+        'fecha_pedido':           'fecha',
+    }
+    df = df.rename(columns=mapeo)
+    print("✅ Columnas mapeadas a nombres estándar")
+
+    # ── 4.3 Limpiar filas sin alistador o sin tiempo ──────────
+    # 958 filas sin alistador — probablemente pedidos del sistema o cancelados
+    antes = len(df)
+    df = df.dropna(subset=['picker_id', 'tiempo_minutos'])
+    despues = len(df)
+    print(f"✅ Filas limpias: {antes - despues} removidas (sin alistador o sin tiempo)")
+
+    # ── 4.4 Filtrar tiempos inválidos ──────────
+    # Tiempo = 0 significa que no se registró — no es un pedido real
+    df = df[df['tiempo_minutos'] > 0]
+    print(f"   Pedidos con tiempo > 0: {len(df):,}")
+
+    # ── 4.5 Convertir tiempo a segundos ──────────
+    # El reporte viene en minutos — multiplicamos por 60
+    df['tiempo_segundos'] = df['tiempo_minutos'] * 60
+    print("✅ Tiempo convertido a segundos")
+
+    # ── 4.6 Columna clave: segundos por línea ──────────
+    # Métrica principal del análisis — normaliza tiempo por complejidad
+    df['seg_por_linea'] = np.where(
+        df['cant_lineas'] > 0,
+        df['tiempo_segundos'] / df['cant_lineas'],
+        np.nan
+    )
+    print("✅ Calculado: segundos por línea")
+    print(f"\n   seg/línea — Promedio: {df['seg_por_linea'].mean():.1f}s")
+    print(f"   seg/línea — Mediana:  {df['seg_por_linea'].median():.1f}s")
+    print(f"   seg/línea — Mínimo:   {df['seg_por_linea'].min():.1f}s")
+    print(f"   seg/línea — Máximo:   {df['seg_por_linea'].max():.1f}s")
+
+    # ── 4.7 Cycle time: fecha pedido → fecha factura ──────────
+    # Métrica nueva — cuánto tiempo pasa desde que se crea el pedido
+    # hasta que sale facturado. Incluye tiempo en cola + alisto + chequeo.
+    if 'fecha_factura' in df.columns and 'fecha' in df.columns:
+        df['cycle_time_min'] = (
+            df['fecha_factura'] - df['fecha']
+        ).dt.total_seconds() / 60
+        # Filtrar cycle times negativos o extremos (errores de datos)
+        df.loc[df['cycle_time_min'] < 0, 'cycle_time_min'] = np.nan
+        df.loc[df['cycle_time_min'] > 1440, 'cycle_time_min'] = np.nan  # > 24 horas
+        print(f"\n✅ Cycle time calculado (pedido → factura)")
+        print(f"   Promedio: {df['cycle_time_min'].mean():.0f} min")
+        print(f"   Mediana:  {df['cycle_time_min'].median():.0f} min")
+
+    # ── 4.8 Extraer hora del día ──────────
+    # inicio_alisto ya es datetime completo — extraemos solo la hora
     if 'hora_inicio' in df.columns:
         df['hora'] = pd.to_datetime(
-            df['hora_inicio'], format='%H:%M:%S', errors='coerce'
+            df['hora_inicio'], errors='coerce'
         ).dt.hour
-        print("✅ Hora extraída de hora_inicio — columna 'hora' creada (0-23)")
-    
-    print(f"\n📊 Dataset listo: {len(df)} pedidos para analizar")
+        print("✅ Hora extraída de inicio_alisto")
+
+    # ── 4.9 Día de la semana ──────────
+    if 'fecha' in df.columns:
+        df['dia_semana'] = pd.to_datetime(
+            df['fecha'], errors='coerce'
+        ).dt.day_name()
+        print("✅ Día de semana calculado")
+
+    print(f"\n📊 Dataset listo: {len(df):,} pedidos para analizar")
     return df
 
 
@@ -760,7 +756,7 @@ if __name__ == "__main__":
     # CAMBIA ESTA LÍNEA con la ruta real de tu archivo
     # cuando lleguen los datos de IT.
     # ══════════════════════════════════════════
-    ARCHIVO = os.path.join(DATA_DIR, "datos_prueba_favarcia.xlsx")   # ← CAMBIAR AQUÍ cuando lleguen datos reales
+    ARCHIVO = os.path.join(DATA_DIR, "FPM_Datos.xlsx")   # ← CAMBIAR AQUÍ cuando lleguen datos reales
 
     print("🚀 INICIANDO ANÁLISIS FAVARCIA PICKING")
     print("="*50)
