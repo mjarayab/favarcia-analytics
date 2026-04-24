@@ -536,15 +536,17 @@ def analisis_sistemico(df):
 
 def control_chart(df, picker_id=None):
     """
-    Genera un gráfico de control (tipo Shewhart X-chart)
-    para el tiempo por línea.
+    Control chart usando MEDIANAS MÓVILES en vez de promedios.
 
-    En manufactura médica esto se usa para detectar si un proceso
-    está "en control estadístico" o si hay causas especiales de variación.
+    Por qué medianas y no promedios:
+    La distribución de tiempos de picking es log-normal (asimétrica)
+    — igual que muchos procesos de manufactura con eventos raros de
+    alta duración. Los promedios y σ se distorsionan por la cola larga.
+    Las medianas son robustas a outliers y más representativas del
+    proceso real.
 
-    Parámetro opcional:
-        picker_id: si se especifica, analiza solo ese alistador.
-                   Si None, analiza todos los pedidos.
+    Esto es equivalente al chart que usarías en medtech para
+    procesos con distribución no-normal.
     """
 
     if 'seg_por_linea' not in df.columns:
@@ -559,63 +561,102 @@ def control_chart(df, picker_id=None):
         datos = df['seg_por_linea'].dropna()
         titulo = "Control Chart — Todos los alistadores"
 
-    # Filtrar outliers extremos para escala legible
-    datos = datos[datos < 600]
+    # Filtrar outliers extremos — pedidos olvidados sin cerrar
+    p99 = datos.quantile(0.99)
+    datos_cc = datos[datos <= p99].reset_index(drop=True)
 
-    # ── Calcular límites de control (±3 sigma) ──
-    media = datos.mean()
-    std   = datos.std()
-    ucl   = media + 3 * std
-    lcl   = max(0, media - 3 * std)
+    # ── Calcular límites basados en percentiles ──
+    # Más robusto que ±3σ para distribuciones asimétricas
+    mediana   = datos_cc.median()
+    p25       = datos_cc.quantile(0.25)
+    p75       = datos_cc.quantile(0.75)
+    iqr       = p75 - p25
+    ucl       = p75 + 1.5 * iqr   # equivalente a fence de Tukey
+    lcl       = max(0, p25 - 1.5 * iqr)
 
-    fuera_control = datos[datos > ucl]
+    fuera_control = datos_cc[datos_cc > ucl]
+    pct_fuera = len(fuera_control) / len(datos_cc) * 100
 
     print(f"\n📊 Control Chart — {titulo}")
-    print(f"   Media (X̄): {media:.1f} seg/línea")
-    print(f"   UCL (+3σ): {ucl:.1f} seg/línea")
-    print(f"   LCL (-3σ): {lcl:.1f} seg/línea")
-    print(f"   Puntos fuera de control: {len(fuera_control)} "
-          f"({len(fuera_control)/len(datos)*100:.1f}%)")
+    print(f"   Mediana: {mediana:.1f} seg/línea")
+    print(f"   P25:     {p25:.1f}s  |  P75: {p75:.1f}s  |  IQR: {iqr:.1f}s")
+    print(f"   UCL (P75 + 1.5×IQR): {ucl:.1f}s")
+    print(f"   LCL (P25 - 1.5×IQR): {lcl:.1f}s")
+    print(f"   Puntos fuera de control: {len(fuera_control):,} ({pct_fuera:.1f}%)")
 
-    # ── Graficar con escala de Y limitada ──
-    # ylim fijo a 300s para que los picos sean visibles
-    # sin que el área azul tape todo el gráfico
-    fig, ax = plt.subplots(figsize=(12, 5))
+    # ── Medianas móviles (ventana de 50 pedidos) ──
+    # Muestra tendencia del proceso en el tiempo
+    # Si la línea sube → el proceso se está deteriorando
+    # Si es plana → proceso estable (aunque fuera de spec)
+    ventana = 50
+    medianas_moviles = datos_cc.rolling(window=ventana, center=True).median()
 
-    ax.plot(range(len(datos)), datos.values,
-            color='steelblue', alpha=0.5, linewidth=0.7, zorder=2)
+    # ── Graficar ──
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 8),
+                                    gridspec_kw={'height_ratios': [3, 1]})
+    fig.suptitle(f'{titulo}', fontsize=12, fontweight='bold')
 
-    # Marcar puntos fuera de UCL en rojo
-    # .index da la posición original en la serie para ubicarlos en X
-    idx_fuera = [i for i, v in enumerate(datos.values) if v > ucl]
-    ax.scatter(idx_fuera, datos.values[idx_fuera],
-               color='red', s=15, zorder=4, label='Fuera de control')
+    # ── Panel superior: puntos individuales ──
+    # Colorear por zona: verde = en control, rojo = fuera
+    colores_pts = ['tomato' if v > ucl else 'steelblue'
+                   for v in datos_cc.values]
+    ax1.scatter(range(len(datos_cc)), datos_cc.values,
+                c=colores_pts, s=3, alpha=0.4, zorder=2)
 
-    # Líneas de referencia
-    ax.axhline(y=media, color='black', linewidth=1.5,
-               label=f'X̄ = {media:.0f}s', zorder=3)
-    ax.axhline(y=ucl, color='red', linewidth=1.5, linestyle='--',
-               label=f'UCL = {ucl:.0f}s (+3σ)', zorder=3)
-    ax.axhline(y=lcl, color='red', linewidth=1.5, linestyle='--',
-               label=f'LCL = {lcl:.0f}s (-3σ)', zorder=3)
-    ax.axhline(y=60, color='green', linewidth=1, linestyle=':',
-               label='Meta 60s', zorder=3)
+    # Línea de medianas móviles
+    ax1.plot(range(len(medianas_moviles)), medianas_moviles.values,
+             color='black', linewidth=1.5, zorder=3,
+             label=f'Mediana móvil ({ventana} pedidos)')
 
-    # Zona de control sombreada — ahora visible porque Y está limitado
-    ax.fill_between(range(len(datos)), lcl, ucl, alpha=0.08, color='blue')
+    # Líneas de control
+    ax1.axhline(y=mediana, color='blue', linewidth=1, linestyle='-',
+                label=f'Mediana = {mediana:.0f}s', alpha=0.7)
+    ax1.axhline(y=ucl, color='red', linewidth=1.5, linestyle='--',
+                label=f'UCL = {ucl:.0f}s')
+    ax1.axhline(y=60, color='green', linewidth=1, linestyle=':',
+                label='Meta 60s')
 
-    # Escala Y limitada a 300s — los puntos arriba de eso
-    # son outliers extremos que distorsionan la escala
-    ax.set_ylim(0, 300)
-    ax.set_xlabel('Pedidos (en orden cronológico)')
-    ax.set_ylabel('Segundos por línea')
-    ax.set_title(f'{titulo}\n'
-                 f'Puntos rojos = fricción de búsqueda | '
-                 f'{len(fuera_control)/len(datos)*100:.1f}% fuera de control')
-    ax.legend(fontsize=9, loc='upper right')
+    # Zona en control sombreada sutilmente
+    ax1.axhspan(lcl, ucl, alpha=0.05, color='green')
+
+    # Escala Y al percentil 97 para visibilidad
+    ax1.set_ylim(0, datos_cc.quantile(0.97) * 1.2)
+    ax1.set_ylabel('Segundos por línea')
+    ax1.set_title(f'Puntos rojos = fricción alta (>{ucl:.0f}s) | '
+                  f'{pct_fuera:.1f}% fuera de control',
+                  fontsize=10)
+    ax1.legend(fontsize=8, loc='upper right')
+
+    # ── Panel inferior: % pedidos con fricción por bloque ──
+    # Divide los pedidos en 30 bloques y calcula % con fricción
+    # Si el % sube en ciertos momentos → hay un patrón temporal
+    n_bloques = 30
+    tam_bloque = len(datos_cc) // n_bloques
+    pct_friccion_bloque = []
+    x_bloques = []
+    for i in range(n_bloques):
+        inicio = i * tam_bloque
+        fin = inicio + tam_bloque
+        bloque = datos_cc.iloc[inicio:fin]
+        pct = (bloque > ucl).mean() * 100
+        pct_friccion_bloque.append(pct)
+        x_bloques.append((inicio + fin) / 2)
+
+    colores_bloques = ['tomato' if p > pct_fuera * 1.5 else 'steelblue'
+                       for p in pct_friccion_bloque]
+    ax2.bar(x_bloques, pct_friccion_bloque,
+            width=tam_bloque * 0.8,
+            color=colores_bloques, alpha=0.7)
+    ax2.axhline(y=pct_fuera, color='red', linewidth=1, linestyle='--',
+                label=f'Promedio: {pct_fuera:.1f}%')
+    ax2.set_ylabel('% fricción')
+    ax2.set_xlabel('Pedidos (orden cronológico)')
+    ax2.set_title('% pedidos con alta fricción por período', fontsize=10)
+    ax2.legend(fontsize=8)
 
     plt.tight_layout()
-    nombre_archivo = os.path.join(OUTPUTS_DIR, f"control_chart_{picker_id if picker_id else 'todos'}.png")
+    nombre_archivo = os.path.join(OUTPUTS_DIR,
+                     f"control_chart_{picker_id if picker_id else 'todos'}.png")
     plt.savefig(nombre_archivo, dpi=150, bbox_inches='tight')
     plt.show()
     print(f"✅ Gráfica guardada: {nombre_archivo}")
