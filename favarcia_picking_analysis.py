@@ -156,11 +156,16 @@ def explorar_datos(df):
 def preparar_datos(df):
     """
     Limpia y crea columnas calculadas.
-    
-    IMPORTANTE: Revisa los nombres de columnas con explorar_datos() primero
-    y ajusta los strings entre comillas según lo que IT entregó.
+    Separa dataset de volumen (todos los pedidos) del de tiempo
+    (solo pedidos con tiempo registrado > 0).
+
+    Contexto operacional:
+        52.1% de pedidos tienen tiempo=0 porque fueron trabajados
+        antes de abrirse en el WMS — práctica normal en Favarcia.
+        Excluirlos del análisis de volumen daría una imagen falsa
+        de la operación real.
     """
-    
+
     print("\n" + "="*50)
     print("PREPARACIÓN DE DATOS")
     print("="*50)
@@ -178,7 +183,6 @@ def preparar_datos(df):
     print(f"   Columnas ahora: {list(df.columns)}")
 
     # ── 4.2 Renombrar columnas reales a nombres estándar ──────────
-    # Mapeo de columnas reales de Favarcia → nombres internos del análisis
     mapeo = {
         'alistador':              'picker_id',
         'tiempo_alisto_minutos':  'tiempo_minutos',
@@ -188,66 +192,85 @@ def preparar_datos(df):
     df = df.rename(columns=mapeo)
     print("✅ Columnas mapeadas a nombres estándar")
 
-    # ── 4.3 Limpiar filas sin alistador o sin tiempo ──────────
-    # 958 filas sin alistador — probablemente pedidos del sistema o cancelados
+    # ── 4.3 Limpiar filas sin alistador ──────────
     antes = len(df)
-    df = df.dropna(subset=['picker_id', 'tiempo_minutos'])
+    df = df.dropna(subset=['picker_id'])
     despues = len(df)
-    print(f"✅ Filas limpias: {antes - despues} removidas (sin alistador o sin tiempo)")
+    print(f"✅ Filas sin alistador removidas: {antes - despues}")
 
-    # ── 4.4 Filtrar tiempos inválidos ──────────
-    # Tiempo = 0 significa que no se registró — no es un pedido real
-    df = df[df['tiempo_minutos'] > 0]
-    print(f"   Pedidos con tiempo > 0: {len(df):,}")
+    # ── 4.4 Separar datasets ──────────────────────────
+    # df_vol    → TODOS los pedidos incluyendo tiempo=0
+    #             para métricas de VOLUMEN real
+    # df_tiempo → solo pedidos con tiempo registrado > 0
+    #             para métricas de TIEMPO y SPC
+    df_vol    = df.copy()
+    df_tiempo = df[df['tiempo_minutos'] > 0].copy()
 
-    # ── 4.5 Convertir tiempo a segundos ──────────
-    # El reporte viene en minutos — multiplicamos por 60
-    df['tiempo_segundos'] = df['tiempo_minutos'] * 60
-    print("✅ Tiempo convertido a segundos")
+    total     = len(df_vol)
+    con_tiempo = len(df_tiempo)
+    sin_tiempo = total - con_tiempo
 
-    # ── 4.6 Columna clave: segundos por línea ──────────
-    # Métrica principal del análisis — normaliza tiempo por complejidad
-    df['seg_por_linea'] = np.where(
-        df['cant_lineas'] > 0,
-        df['tiempo_segundos'] / df['cant_lineas'],
+    print(f"\n📊 Calidad de datos:")
+    print(f"   Total pedidos:              {total:,}")
+    print(f"   Con tiempo registrado:      {con_tiempo:,} ({con_tiempo/total*100:.1f}%)")
+    print(f"   Sin tiempo (tiempo=0):      {sin_tiempo:,} ({sin_tiempo/total*100:.1f}%)")
+    print(f"   → El {sin_tiempo/total*100:.1f}% fue trabajado sin abrir el pedido en el WMS")
+
+    # ── 4.5 Calcular métricas de tiempo ──────────────
+    df_tiempo['tiempo_segundos'] = df_tiempo['tiempo_minutos'] * 60
+    df_tiempo['seg_por_linea'] = np.where(
+        df_tiempo['cant_lineas'] > 0,
+        df_tiempo['tiempo_segundos'] / df_tiempo['cant_lineas'],
         np.nan
     )
-    print("✅ Calculado: segundos por línea")
-    print(f"\n   seg/línea — Promedio: {df['seg_por_linea'].mean():.1f}s")
-    print(f"   seg/línea — Mediana:  {df['seg_por_linea'].median():.1f}s")
-    print(f"   seg/línea — Mínimo:   {df['seg_por_linea'].min():.1f}s")
-    print(f"   seg/línea — Máximo:   {df['seg_por_linea'].max():.1f}s")
 
-    # ── 4.7 Cycle time: fecha pedido → fecha factura ──────────
-    # Métrica nueva — cuánto tiempo pasa desde que se crea el pedido
-    # hasta que sale facturado. Incluye tiempo en cola + alisto + chequeo.
-    if 'fecha_factura' in df.columns and 'fecha' in df.columns:
-        df['cycle_time_min'] = (
-            df['fecha_factura'] - df['fecha']
+    # Clasificar outliers
+    df_tiempo['es_outlier'] = (
+        ((df_tiempo['tiempo_minutos'] < 1) & (df_tiempo['cant_lineas'] > 3)) |
+        (df_tiempo['tiempo_minutos'] > 240) |
+        ((df_tiempo['cant_lineas'] <= 2) & (df_tiempo['tiempo_minutos'] > 30))
+    )
+
+    print(f"\n   Métricas de tiempo (pedidos con tiempo registrado):")
+    print(f"   seg/línea — Promedio: {df_tiempo['seg_por_linea'].mean():.1f}s")
+    print(f"   seg/línea — Mediana:  {df_tiempo['seg_por_linea'].median():.1f}s")
+    print(f"   seg/línea — Mínimo:   {df_tiempo['seg_por_linea'].min():.1f}s")
+    print(f"   seg/línea — Máximo:   {df_tiempo['seg_por_linea'].max():.1f}s")
+    print(f"   Outliers:             {df_tiempo['es_outlier'].sum():,} ({df_tiempo['es_outlier'].mean()*100:.1f}%)")
+
+    # ── 4.6 Cycle time ────────────────────────────────
+    if 'fecha_factura' in df_vol.columns and 'fecha' in df_vol.columns:
+        df_vol['cycle_time_min'] = (
+            pd.to_datetime(df_vol['fecha_factura'], errors='coerce') -
+            pd.to_datetime(df_vol['fecha'], errors='coerce')
         ).dt.total_seconds() / 60
-        # Filtrar cycle times negativos o extremos (errores de datos)
-        df.loc[df['cycle_time_min'] < 0, 'cycle_time_min'] = np.nan
-        df.loc[df['cycle_time_min'] > 1440, 'cycle_time_min'] = np.nan  # > 24 horas
+        df_vol.loc[df_vol['cycle_time_min'] < 0,    'cycle_time_min'] = np.nan
+        df_vol.loc[df_vol['cycle_time_min'] > 1440, 'cycle_time_min'] = np.nan
+        ct = df_vol['cycle_time_min'].dropna()
         print(f"\n✅ Cycle time calculado (pedido → factura)")
-        print(f"   Promedio: {df['cycle_time_min'].mean():.0f} min")
-        print(f"   Mediana:  {df['cycle_time_min'].median():.0f} min")
+        print(f"   Mediana: {ct.median():.0f} min ({ct.median()/60:.1f}h)")
+        print(f"   P90:     {ct.quantile(0.90):.0f} min ({ct.quantile(0.90)/60:.1f}h)")
 
-    # ── 4.8 Extraer hora del día ──────────
-    # inicio_alisto ya es datetime completo — extraemos solo la hora
-    if 'hora_inicio' in df.columns:
-        df['hora'] = pd.to_datetime(
-            df['hora_inicio'], errors='coerce'
+    # ── 4.7 Hora del día ──────────────────────────────
+    if 'hora_inicio' in df_tiempo.columns:
+        df_tiempo['hora'] = pd.to_datetime(
+            df_tiempo['hora_inicio'], errors='coerce'
         ).dt.hour
         print("✅ Hora extraída de inicio_alisto")
 
-    # ── 4.9 Día de la semana ──────────
-    if 'fecha' in df.columns:
-        df['dia_semana'] = pd.to_datetime(
-            df['fecha'], errors='coerce'
+    # ── 4.8 Día de la semana ──────────────────────────
+    if 'fecha' in df_tiempo.columns:
+        df_tiempo['dia_semana'] = pd.to_datetime(
+            df_tiempo['fecha'], errors='coerce'
         ).dt.day_name()
         print("✅ Día de semana calculado")
 
-    print(f"\n📊 Dataset listo: {len(df):,} pedidos para analizar")
+    # Copiar seg_por_linea al df principal para compatibilidad
+    # con las funciones de análisis existentes
+    df = df_tiempo.copy()
+
+    print(f"\n📊 Dataset listo para análisis SPC: {len(df):,} pedidos con tiempo registrado")
+    print(f"   (Dataset de volumen completo: {len(df_vol):,} pedidos)")
     return df
 
 
