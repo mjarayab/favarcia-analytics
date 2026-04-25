@@ -58,6 +58,8 @@ df = df.rename(columns={
 # Limpiar filas sin alistador
 df = df.dropna(subset=['picker_id'])
 
+
+
 # ── Separar dos datasets ──────────────────────────────────
 # df_vol    → todos los pedidos incluyendo tiempo=0
 #             para métricas de VOLUMEN real
