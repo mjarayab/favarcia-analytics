@@ -117,6 +117,40 @@ print(f"   Unidades totales:          {picker_vol['cant_unidades'].sum():,.0f}")
 print(f"   Líneas por pedido:         {picker_vol['cant_lineas'].mean():.1f} promedio  |  {picker_vol['cant_lineas'].median():.0f} mediana")
 print(f"   Pedido más grande:         {picker_vol['cant_lineas'].max():.0f} líneas")
 
+# ── AJUSTE POR DISPONIBILIDAD PARCIAL ────────────────────
+# Solo aplica para alistadores con roles adicionales
+# que reducen su tiempo disponible de picking
+AJUSTES_DISPONIBILIDAD = {
+    'EM047': {
+        'descripcion': 'Documentación FPM — 3 mañanas/semana',
+        'horas_doc_semana':  13.5,   # 3 mañanas × 4.5 hrs
+        'horas_turno_total': 55,     # 11hrs × 5 días
+    }
+}
+
+if PICKER in AJUSTES_DISPONIBILIDAD:
+    aj = AJUSTES_DISPONIBILIDAD[PICKER]
+    horas_picking = aj['horas_turno_total'] - aj['horas_doc_semana']
+    factor        = aj['horas_turno_total'] / horas_picking
+    ped_ajustados = len(picker_vol) * factor
+    lin_ajustadas = picker_vol['cant_lineas'].sum() * factor
+
+    print(f"\n⚙️  AJUSTE POR DISPONIBILIDAD PARCIAL")
+    print(f"   Motivo:                   {aj['descripcion']}")
+    print(f"   Horas en otra función:    {aj['horas_doc_semana']}h/semana")
+    print(f"   Horas reales de picking:  {horas_picking:.1f}h/semana")
+    print(f"   Factor de ajuste:         {factor:.2f}x")
+    print(f"   Pedidos reales:           {len(picker_vol):,}")
+    print(f"   Pedidos equiv. full-time: {ped_ajustados:,.0f}")
+    print(f"   Líneas equiv. full-time:  {lin_ajustadas:,.0f}")
+
+    # Ranking ajustado vs operación completa
+    vol_otros = df_vol[df_vol['picker_id'] != PICKER].groupby('picker_id').size()
+    ranking_aj = (vol_otros > ped_ajustados).sum() + 1
+    total_pickers = len(vol_otros[vol_otros >= 200]) + 1
+    print(f"   Ranking volumen ajustado: #{ranking_aj} de {total_pickers} alistadores")
+    print(f"   (vs ranking actual sin ajuste basado en volumen real)")
+
 # ── TIEMPO POR LÍNEA ──────────────────────────────────────
 if len(picker_tiempo) == 0:
     print(f"\n⚠️  Sin pedidos con tiempo registrado para análisis de tiempo.")
