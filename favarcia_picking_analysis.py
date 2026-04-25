@@ -328,23 +328,40 @@ def analisis_distribucion(df):
     ax1.legend(fontsize=9)
     
     # ── Gráfica 2: Boxplot por alistador ──
-    # Muestra la variabilidad de cada persona
-    # Si todos tienen la misma cola larga → el problema es del sistema
-    
-    # AJUSTA 'picker_id' al nombre real de la columna de alistador
     if 'picker_id' in df_plot.columns:
-        # Top 10 alistadores por volumen para que el gráfico sea legible
-        top_pickers = (df_plot.groupby('picker_id')['seg_por_linea']
-                       .count()
+        # Top 10 por volumen TOTAL (incluyendo tiempo=0)
+        df_raw = pd.read_excel(ARCHIVO)
+        df_raw.columns = (df_raw.columns.str.lower().str.strip()
+                          .str.replace(' ', '_')
+                          .str.replace('(', '').str.replace(')', ''))
+        df_raw = df_raw.rename(columns={'alistador': 'picker_id'})
+        df_raw = df_raw.dropna(subset=['picker_id'])
+
+        # Mapeo de nombres
+        mapeo_nombres = {}
+        for picker in df_raw['picker_id'].unique():
+            nombres = df_raw[df_raw['picker_id'] == picker]['nombre'].dropna()
+            if len(nombres) > 0:
+                palabras = str(nombres.iloc[0]).split()
+                if len(palabras) >= 3:
+                    primer_nombre = palabras[2].capitalize()
+                    mapeo_nombres[picker] = f"{primer_nombre} ({picker})"
+                else:
+                    mapeo_nombres[picker] = picker
+
+        top_pickers = (df_raw.groupby('picker_id')
+                       .size()
                        .nlargest(10)
                        .index)
-        df_top = df_plot[df_plot['picker_id'].isin(top_pickers)]
-        
-        sns.boxplot(data=df_top, x='picker_id', y='seg_por_linea',
+
+        df_top = df_plot[df_plot['picker_id'].isin(top_pickers)].copy()
+        df_top['etiqueta'] = df_top['picker_id'].map(mapeo_nombres).fillna(df_top['picker_id'])
+
+        sns.boxplot(data=df_top, x='etiqueta', y='seg_por_linea',
                     ax=ax2, palette='husl')
         ax2.axhline(y=60, color='green', linestyle='--', linewidth=1.5,
                     label='Meta: 60 seg')
-        ax2.set_xlabel('Alistador (ID)')
+        ax2.set_xlabel('Alistador')
         ax2.set_ylabel('Segundos por línea')
         ax2.set_title('Variabilidad por alistador\n(colas similares = problema sistémico)')
         ax2.tick_params(axis='x', rotation=45)
