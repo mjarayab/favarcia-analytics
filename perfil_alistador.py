@@ -223,7 +223,7 @@ else:
     print(f"\n📋 PEDIDOS CON MAYOR FRICCIÓN (top 10)")
     top_friccion = (picker_tiempo[picker_tiempo.seg_por_linea > umbral]
                     .sort_values('seg_por_linea', ascending=False)
-                    [['fecha', 'cant_lineas', 'tiempo_minutos', 'seg_por_linea']]
+                    [['hora_inicio', 'cant_lineas', 'tiempo_minutos', 'seg_por_linea']]
                     .head(10))
     if len(top_friccion) > 0:
         print(top_friccion.to_string(index=False))
