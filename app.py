@@ -92,6 +92,31 @@ st.sidebar.markdown("**FPM — Favarcia Plan de Mejora**")
 if not datos_ok:
     st.stop()
 
+# ── Filtro de fechas en sidebar ───────────────────────────
+st.sidebar.markdown("---")
+st.sidebar.subheader("Filtro de período")
+
+fecha_min = pd.to_datetime(df_vol['fecha_factura'], errors='coerce').min().date()
+fecha_max = pd.to_datetime(df_vol['fecha_factura'], errors='coerce').max().date()
+
+fecha_inicio, fecha_fin = st.sidebar.date_input(
+    "Selecciona período:",
+    value=(fecha_min, fecha_max),
+    min_value=fecha_min,
+    max_value=fecha_max,
+    format="DD/MM/YYYY"
+)
+
+# Aplicar filtro a ambos datasets
+mask = (
+    (pd.to_datetime(df_vol['fecha_factura'], errors='coerce').dt.date >= fecha_inicio) &
+    (pd.to_datetime(df_vol['fecha_factura'], errors='coerce').dt.date <= fecha_fin)
+)
+df_vol    = df_vol[mask].copy()
+df_tiempo = df_tiempo[mask].copy()
+
+st.sidebar.caption(f"Pedidos en período: {len(df_vol):,}")
+
 # ══════════════════════════════════════════════════════════
 # PÁGINA 1 — RESUMEN DE LA OPERACIÓN
 # ══════════════════════════════════════════════════════════
@@ -412,6 +437,96 @@ elif pagina == "🔍 Perfil Individual":
         else:
             st.success("Sin pedidos con alta fricción")
 
+    st.markdown("---")
+
+    # ── Tamaño de pedidos ─────────────────────────────────
+    st.subheader("Tamaño de pedidos — ¿Pedidos grandes o pequeños?")
+
+    mediana_global = df_vol['cant_lineas'].median()
+    mediana_picker = picker_vol['cant_lineas'].median()
+    promedio_picker = picker_vol['cant_lineas'].mean()
+    diff_med = mediana_picker - mediana_global
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Mediana líneas/pedido", f"{mediana_picker:.0f}",
+                delta=f"{diff_med:+.0f} vs operación ({mediana_global:.0f})",
+                delta_color="normal")
+    col2.metric("Promedio líneas/pedido", f"{promedio_picker:.1f}")
+    col3.metric("Pedido más grande", f"{picker_vol['cant_lineas'].max():.0f} líneas")
+
+    if diff_med < -mediana_global * 0.3:
+        st.warning(f"Patrón: pedidos PEQUEÑOS — mediana {mediana_picker:.0f} líneas vs operación {mediana_global:.0f}")
+    elif diff_med > mediana_global * 0.3:
+        st.info(f"Patrón: pedidos GRANDES — mediana {mediana_picker:.0f} líneas vs operación {mediana_global:.0f}")
+    else:
+        st.success(f"Patrón: pedidos TÍPICOS — mediana {mediana_picker:.0f} líneas vs operación {mediana_global:.0f}")
+
+    col_c, col_d = st.columns(2)
+
+    with col_c:
+        # Histograma de tamaño de pedidos
+        fig_tam = px.histogram(
+            picker_vol[picker_vol['cant_lineas'] <= picker_vol['cant_lineas'].quantile(0.95)],
+            x='cant_lineas', nbins=30,
+            labels={'cant_lineas': 'Líneas por pedido', 'count': 'Cantidad'},
+            color_discrete_sequence=['steelblue'],
+            title='Distribución de tamaño de pedidos'
+        )
+        fig_tam.add_vline(x=mediana_global, line_dash="dash", line_color="red",
+                         annotation_text=f"Mediana operación: {mediana_global:.0f}")
+        fig_tam.add_vline(x=mediana_picker, line_dash="solid", line_color="black",
+                         annotation_text=f"Mediana picker: {mediana_picker:.0f}")
+        fig_tam.update_layout(height=300, showlegend=False)
+        st.plotly_chart(fig_tam, use_container_width=True)
+
+    with col_d:
+        # % pedidos por categoría de tamaño
+        picker_vol2 = picker_vol.copy()
+        picker_vol2['categoria'] = pd.cut(
+            picker_vol2['cant_lineas'],
+            bins=[0, 2, 5, 10, 20, 999],
+            labels=['1-2 líneas', '3-5 líneas', '6-10 líneas', '11-20 líneas', '20+ líneas']
+        )
+        cat_counts = picker_vol2['categoria'].value_counts().sort_index()
+        cat_pct = (cat_counts / len(picker_vol2) * 100).reset_index()
+        cat_pct.columns = ['categoria', 'pct']
+
+        fig_cat = px.bar(cat_pct, x='categoria', y='pct',
+                        labels={'categoria': 'Tamaño', 'pct': '% de pedidos'},
+                        color_discrete_sequence=['steelblue'],
+                        title='% pedidos por tamaño')
+        fig_cat.update_layout(height=300, showlegend=False)
+        st.plotly_chart(fig_cat, use_container_width=True)
+
+    st.markdown("---")
+
+    # ── Boxplot comparativo ───────────────────────────────
+    st.subheader("Comparación con otros alistadores")
+
+    if len(picker_tiempo) > 0:
+        # Top 10 por volumen + el picker seleccionado
+        top10_vol = (df_vol.groupby('picker_id').size()
+                    .nlargest(10).index.tolist())
+        if picker_sel not in top10_vol:
+            top10_vol.append(picker_sel)
+
+        df_box = df_tiempo[df_tiempo['picker_id'].isin(top10_vol)].copy()
+        df_box = df_box[df_box['seg_por_linea'] < df_box['seg_por_linea'].quantile(0.95)]
+        df_box['es_seleccionado'] = df_box['picker_id'] == picker_sel
+        df_box['etiqueta_box'] = df_box['picker_id'].map(mapeo).fillna(df_box['picker_id'])
+
+        fig_box = px.box(df_box, x='etiqueta_box', y='seg_por_linea',
+                        color='es_seleccionado',
+                        color_discrete_map={True: 'tomato', False: 'steelblue'},
+                        labels={'etiqueta_box': 'Alistador',
+                                'seg_por_linea': 'Segundos por línea'},
+                        title='Distribución de tiempos — Alistador seleccionado (rojo) vs top 10')
+        fig_box.add_hline(y=60, line_dash="dash", line_color="green",
+                         annotation_text="Meta 60s")
+        fig_box.update_layout(showlegend=False, height=400,
+                              xaxis_tickangle=45)
+        st.plotly_chart(fig_box, use_container_width=True)
+
 # ══════════════════════════════════════════════════════════
 # PÁGINA 4 — RANKING
 # ══════════════════════════════════════════════════════════
@@ -420,7 +535,11 @@ elif pagina == "🏆 Ranking":
     st.markdown("Excluye roles de apoyo | Mínimo 200 pedidos | Score compuesto 0-100")
 
     ROLES_APOYO = ['EM039', 'EM560', 'EM289']
-    MIN_PEDIDOS = 200
+
+    # Mínimo dinámico según el período seleccionado
+    dias_periodo = (fecha_fin - fecha_inicio).days
+    MIN_PEDIDOS = max(10, int(dias_periodo * 1.5))
+    st.caption(f"Mínimo de pedidos para aparecer en ranking: {MIN_PEDIDOS} (basado en {dias_periodo} días)")
 
     df_rank   = df_vol[~df_vol['picker_id'].isin(ROLES_APOYO)].copy()
     df_rank_t = df_tiempo[~df_tiempo['picker_id'].isin(ROLES_APOYO)].copy()
