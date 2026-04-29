@@ -405,7 +405,7 @@ elif pagina == "🔍 Perfil Individual":
         st.subheader("Top 10 pedidos con mayor fricción")
         top_f = (picker_tiempo[picker_tiempo['seg_por_linea'] > umbral]
                  .sort_values('seg_por_linea', ascending=False)
-                 [['fecha', 'cant_lineas', 'tiempo_minutos', 'seg_por_linea']]
+                 [['hora_inicio', 'cant_lineas', 'tiempo_minutos', 'seg_por_linea']]
                  .head(10))
         if len(top_f) > 0:
             st.dataframe(top_f.round(1), use_container_width=True)
