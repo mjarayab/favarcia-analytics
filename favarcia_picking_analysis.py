@@ -248,6 +248,9 @@ def preparar_datos(df):
         df_vol.loc[df_vol['cycle_time_min'] > 1440, 'cycle_time_min'] = np.nan
         ct = df_vol['cycle_time_min'].dropna()
         print(f"\n✅ Cycle time calculado (pedido → factura)")
+        print(f"   NOTA: FECHA PEDIDO con 00:00 infla el cycle time")
+        print(f"   para pedidos cuya orden llegó de noche.")
+        print(f"   Mediana puede estar sobreestimada en esos casos.")
         print(f"   Mediana: {ct.median():.0f} min ({ct.median()/60:.1f}h)")
         print(f"   P90:     {ct.quantile(0.90):.0f} min ({ct.quantile(0.90)/60:.1f}h)")
 
