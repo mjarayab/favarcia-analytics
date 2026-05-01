@@ -169,6 +169,37 @@ ax4.set_title('Distribución de tamaño de pedidos\n(top 10 por volumen)')
 ax4.tick_params(axis='x', rotation=45)
 ax4.legend(fontsize=8)
 
+# Gráfica 5: Boxplot de líneas por pedido por alistador (top 15)
+fig2, ax5 = plt.subplots(figsize=(14, 6))
+top15_vol = resumen.nlargest(15, 'total_pedidos')['picker_id']
+top15_etiquetas = [mapeo_nombres.get(p, p) for p in top15_vol]
+data_box2 = [df[df['picker_id'] == p]['cant_lineas'].values for p in top15_vol]
+
+bp2 = ax5.boxplot(data_box2, tick_labels=top15_etiquetas, patch_artist=True,
+                  medianprops={'color': 'red', 'linewidth': 2},
+                  flierprops={'marker': 'o', 'markersize': 3, 'alpha': 0.3})
+
+for patch, picker in zip(bp2['boxes'], top15_vol):
+    patch.set_facecolor('tomato' if picker in ['EM239', 'EM039'] else 'steelblue')
+    patch.set_alpha(0.6)
+
+ax5.axhline(y=mediana_global, color='green', linestyle='--',
+            linewidth=1.5, label=f'Mediana global: {mediana_global:.0f} líneas')
+ax5.set_ylabel('Líneas por pedido')
+ax5.set_title('DISTRIBUCIÓN DE TAMAÑO DE PEDIDOS POR ALISTADOR\n'
+              'Cajas bajas y compactas = pedidos pequeños | '
+              'Cajas altas y dispersas = pedidos grandes',
+              fontsize=11, fontweight='bold')
+ax5.tick_params(axis='x', rotation=45)
+ax5.legend(fontsize=9)
+ax5.set_ylim(0, df['cant_lineas'].quantile(0.95))
+
+plt.tight_layout()
+ruta5 = os.path.join(OUTPUTS_DIR, 'boxplot_lineas_alistador.png')
+plt.savefig(ruta5, dpi=150, bbox_inches='tight')
+plt.show()
+print(f"✅ Gráfica guardada: {ruta5}")
+
 plt.tight_layout()
 ruta = os.path.join(OUTPUTS_DIR, 'distribucion_pedidos.png')
 plt.savefig(ruta, dpi=150, bbox_inches='tight')
