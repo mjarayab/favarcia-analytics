@@ -266,10 +266,11 @@ elif pagina == "👥 Dashboard Alistadores":
     resumen['es_apoyo'] = resumen['picker_id'].isin(ROLES_APOYO)
     resumen = resumen[resumen['total_pedidos'] >= 50]
 
-    tab1, tab2, tab3 = st.tabs([
+    tab1, tab2, tab3, tab4 = st.tabs([
         "Volumen de pedidos",
         "Tiempo por linea",
-        "Volumen vs Tiempo"
+        "Volumen vs Tiempo",
+        "Tamaño de pedidos"
     ])
 
     with tab1:
@@ -349,6 +350,29 @@ elif pagina == "👥 Dashboard Alistadores":
         fig.update_layout(showlegend=False, height=550)
         st.plotly_chart(fig, use_container_width=True)
 
+    with tab4:
+        st.subheader("Distribución de Tamaño de Pedidos por Alistador")
+        st.markdown("Cajas bajas y compactas = pedidos pequeños | Cajas altas y dispersas = pedidos grandes")
+
+        top15_vol = (resumen.nlargest(15, 'total_pedidos')['picker_id'].tolist())
+        df_box_tam = df_vol[df_vol['picker_id'].isin(top15_vol)].copy()
+        df_box_tam['etiqueta'] = df_box_tam['picker_id'].map(mapeo).fillna(df_box_tam['picker_id'])
+        df_box_tam['es_apoyo'] = df_box_tam['picker_id'].isin(ROLES_APOYO)
+
+        p95 = df_box_tam['cant_lineas'].quantile(0.95)
+        df_box_tam = df_box_tam[df_box_tam['cant_lineas'] <= p95]
+        mediana_global = df_vol['cant_lineas'].median()
+
+        fig_box = px.box(df_box_tam, x='etiqueta', y='cant_lineas',
+                        color='es_apoyo',
+                        color_discrete_map={True: 'lightcoral', False: 'steelblue'},
+                        labels={'etiqueta': 'Alistador',
+                                'cant_lineas': 'Lineas por pedido'})
+        fig_box.add_hline(y=mediana_global, line_dash="dash", line_color="green",
+                         annotation_text=f"Mediana global: {mediana_global:.0f}")
+        fig_box.update_layout(showlegend=False, height=500, xaxis_tickangle=45)
+        st.plotly_chart(fig_box, use_container_width=True)
+        st.caption("Coral = rol de apoyo | Azul = alistador permanente")
 # ══════════════════════════════════════════════════════════
 # PÁGINA 3 — PERFIL INDIVIDUAL
 # ══════════════════════════════════════════════════════════
