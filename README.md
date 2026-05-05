@@ -2,8 +2,185 @@
 ### Warehouse Operations — Statistical Process Control Applied to Order Fulfillment
 
 **Autor:** Mauricio Araya  
-**Inicio:** Abril 2026  
-**Estado:** ✅ Análisis base completo — esperando datos reales de producción
+**Período de datos:** Enero — Abril 2026  
+**Estado:** ✅ Análisis completo con datos reales de producción
+
+---
+
+## Objetivo
+
+Demostrar mediante análisis estadístico que la variabilidad en tiempos de picking en Grupo Favarcia S.A. es un problema **sistémico** — cajones vacíos, ubicaciones incorrectas en WMS, reposición tardía — y no un problema de desempeño individual de los operadores.
+
+**Hipótesis central:**
+El KPI actual (1 min/línea) mide *output*, no *proceso*. El tiempo de búsqueda de producto cuando un cajón está vacío no está capturado en ninguna métrica existente — pero sí aparece como variabilidad estadística en los datos de pedidos individuales.
+
+---
+
+## Resultados con Datos Reales
+
+### Dataset
+- **31,415 pedidos** — Enero a Abril 2026
+- **38 alistadores** activos en el período
+- **52.1% de pedidos con tiempo=0** — trabajados antes de abrirse en el WMS
+- **15,033 pedidos con tiempo registrado** — base del análisis estadístico
+
+---
+
+### Hallazgo 1 — El proceso es incapaz (Cpk = 0.03)
+
+| Índice | Valor | Interpretación |
+|---|---|---|
+| Cp | 0.21 | Capacidad potencial si el proceso estuviera centrado |
+| Cpk | **0.03** | **Proceso INCAPAZ** — produce defectos sistemáticamente |
+| Media | 110s/línea | 83% por encima de la meta |
+| USL | 120s/línea | Umbral de alta fricción |
+| Target | 60s/línea | Meta operacional actual |
+
+---
+
+### Hallazgo 2 — El 30.6% de pedidos tienen alta fricción
+
+El 30.6% de pedidos superan el umbral de 120s/línea. La diferencia entre alistadores expertos (27.8% fricción) y nuevos (30.0%) es solo 2.2 puntos — confirma que la fricción es **sistémica**, no individual.
+
+---
+
+### Hallazgo 3 — El WMS invisibiliza el 52.1% del trabajo
+
+El caso más extremo: Jorge (EM564) tiene 93.2% de trabajo invisible — aparece con 206 pedidos en el KPI cuando realmente procesó 3,037.
+
+---
+
+### Hallazgo 4 — El pico de las 14:00h es un deadline, no productividad
+
+El 23.7% de todos los pedidos se cierran a las 14:00h — presión del deadline de las rutas prioritarias.
+
+---
+
+### Hallazgo 5 — Tiempo en cola mediano: 72 minutos
+
+Un pedido típico espera 72 minutos desde que contabilidad lo procesa hasta que un alistador lo toma. Refleja priorización de rutas, no ineficiencia.
+
+---
+
+### Hallazgo 6 — Roles operacionales mezclados en los datos
+
+El KPI actual compara alistadores permanentes, chequeadores, gondoleros y montacargas como si fueran equivalentes — distorsionando completamente cualquier comparación de desempeño.
+
+---
+
+### Hallazgo 7 — El mejor alistador real es Juan (EM452)
+
+Score compuesto 81.3/100: mediana exacta de 60s/línea, 86.1% registro WMS, pedidos de alta complejidad, alto volumen.
+
+---
+
+## Scripts del Proyecto
+
+| Script | Función |
+|---|---|
+| `favarcia_picking_analysis.py` | Análisis principal: distribución, SPC, Cpk, control chart |
+| `perfil_alistador.py` | Perfil individual: `python perfil_alistador.py EM047` |
+| `distribucion_pedidos.py` | Quién toma qué tipo de pedidos |
+| `ranking_alistadores.py` | Top performers excluyendo roles de apoyo |
+| `dashboard_alistadores.py` | Gráficas comparativas estáticas |
+| `throughput_analisis.py` | Throughput por hora + tiempo en cola |
+| `analisis_errores.py` | Análisis de errores |
+| `verificar_datos.py` | Diagnóstico de calidad de datos |
+| `app.py` | Streamlit dashboard interactivo (4 páginas) |
+
+---
+
+## App Streamlit
+
+```bash
+streamlit run app.py
+```
+
+4 páginas con filtro de período en el sidebar:
+1. **Resumen Operación** — KPIs, distribución, Cpk, control chart
+2. **Dashboard Alistadores** — volumen, tiempo, scatter, tamaño de pedidos
+3. **Perfil Individual** — métricas, fricción por hora, análisis de tamaño
+4. **Ranking** — score compuesto 0-100, tabla interactiva
+
+---
+
+## Limitaciones del Dataset
+
+Documentadas en `LIMITACIONES_DATASET.md`. Las principales:
+
+1. **52.1% tiempo=0** — pedidos trabajados sin abrir el WMS
+2. **FECHA PEDIDO con 00:00** — hora del cliente, no del sistema
+3. **Pausas no capturadas** — almuerzo y cafés inflan tiempos
+4. **Errores sin fecha** — WMS recién comenzó a registrar
+5. **Roles mezclados** — chequeadores y gondoleros aparecen como alistadores
+
+---
+
+## Stack Técnico
+
+```
+pandas · numpy · matplotlib · seaborn · scipy · plotly · streamlit · openpyxl
+```
+
+```bash
+pip install pandas numpy matplotlib seaborn scipy plotly streamlit openpyxl
+```
+
+---
+
+## Estructura del Proyecto
+
+```
+favarcia-analytics/
+├── README.md
+├── LIMITACIONES_DATASET.md
+├── SOLICITUD_DATOS_IT.md
+├── GUIA_APRENDIZAJE_PYTHON.md
+├── app.py
+├── favarcia_picking_analysis.py
+├── perfil_alistador.py
+├── distribucion_pedidos.py
+├── ranking_alistadores.py
+├── dashboard_alistadores.py
+├── throughput_analisis.py
+├── analisis_errores.py
+├── verificar_datos.py
+├── generar_datos_prueba.py
+├── data/raw/          ← datos reales (excluidos, .gitignore)
+└── outputs/           ← gráficas generadas (excluidas, .gitignore)
+```
+
+---
+
+## Conexión con Manufactura de Dispositivos Médicos
+
+| Favarcia (Warehouse) | Medtech (Manufactura) |
+|---|---|
+| Tiempo por línea de picking | Cycle time por operación |
+| Distribución de tiempos | Process capability analysis |
+| Control Chart ±3σ | SPC — Statistical Process Control |
+| Cpk = 0.03 → proceso incapaz | Cpk < 1.0 → detener línea |
+| Fricción sistémica vs individual | Common cause vs special cause variation |
+
+---
+
+## Roadmap
+
+- [x] Análisis estadístico completo con datos reales
+- [x] Control Chart robusto (IQR-based)
+- [x] Análisis de capacidad Cpk
+- [x] Throughput y tiempo en cola
+- [x] Perfil individual por alistador
+- [x] Ranking excluyendo roles de apoyo
+- [x] Dashboard Streamlit con filtro de fechas
+- [ ] Datos adicionales de IT (6 meses + RUTA + CHEQUEADOR)
+- [ ] Dashboard Power BI para gerencia
+- [ ] Análisis con datos enriquecidos
+
+---
+
+*Autor: Mauricio Araya | Logistics & Process Improvement Coordinator*
+*Grupo Favarcia S.A. — Costa Rica*
 
 ---
 
