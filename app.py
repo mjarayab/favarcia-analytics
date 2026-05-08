@@ -83,7 +83,8 @@ pagina = st.sidebar.radio(
     ["📊 Resumen Operación",
      "👥 Dashboard Alistadores",
      "🔍 Perfil Individual",
-     "🏆 Ranking"]
+     "🏆 Ranking",
+     "⏱️ Tiempo Idle"]
 )
 
 st.sidebar.markdown("---")
@@ -641,3 +642,135 @@ elif pagina == "🏆 Ranking":
     fig2.update_layout(barmode='group', height=350,
                       yaxis_title='Score (0-100)')
     st.plotly_chart(fig2, use_container_width=True)
+
+    # ══════════════════════════════════════════════════════════
+# PÁGINA 5 — TIEMPO IDLE
+# ══════════════════════════════════════════════════════════
+elif pagina == "⏱️ Tiempo Idle":
+    st.title("⏱️ Tiempo Idle Entre Pedidos")
+    st.markdown("Tiempo entre FIN de un pedido e INICIO del siguiente")
+
+    # Selector de alistador
+    pickers_disponibles = sorted(df_vol['picker_id'].unique())
+    etiquetas_disponibles = [mapeo.get(p, p) for p in pickers_disponibles]
+    seleccion = st.selectbox("Selecciona un alistador:", etiquetas_disponibles)
+    picker_sel = pickers_disponibles[etiquetas_disponibles.index(seleccion)]
+
+    # Calcular idle
+    df_raw = df_tiempo[df_tiempo['picker_id'] == picker_sel].copy()
+    df_raw = df_raw.sort_values('hora_inicio').reset_index(drop=True)
+
+    df_raw['fin_dt']   = pd.to_datetime(df_raw['hora_inicio'], errors='coerce') + \
+                         pd.to_timedelta(df_raw['tiempo_minutos'], unit='m')
+    df_raw['ini_dt']   = pd.to_datetime(df_raw['hora_inicio'], errors='coerce')
+    df_raw['fecha_dt'] = df_raw['ini_dt'].dt.date
+
+    idle_records = []
+    for i in range(1, len(df_raw)):
+        fin_ant   = df_raw.loc[i-1, 'fin_dt']
+        ini_act   = df_raw.loc[i,   'ini_dt']
+        if pd.isna(fin_ant) or pd.isna(ini_act):
+            continue
+        if fin_ant.date() != ini_act.date():
+            continue
+        idle_min = (ini_act - fin_ant).total_seconds() / 60
+        if 0 <= idle_min <= 60:
+            idle_records.append({
+                'hora':     fin_ant.hour,
+                'idle_min': idle_min,
+                'fecha':    fin_ant,
+            })
+
+    if len(idle_records) < 2:
+        st.warning("No hay suficientes datos de idle para este alistador.")
+        st.stop()
+
+    df_idle = pd.DataFrame(idle_records)
+
+    # KPIs
+    st.markdown("---")
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Mediana idle", f"{df_idle['idle_min'].median():.1f} min")
+    col2.metric("% gaps > 15 min", f"{(df_idle['idle_min'] > 15).mean()*100:.1f}%")
+    col3.metric("P75", f"{df_idle['idle_min'].quantile(0.75):.1f} min")
+    col4.metric("P90", f"{df_idle['idle_min'].quantile(0.90):.1f} min")
+
+    st.markdown("---")
+
+    por_hora = df_idle.groupby('hora').agg(
+        mediana = ('idle_min', 'median'),
+        gaps    = ('idle_min', 'count'),
+        pct_15  = ('idle_min', lambda x: (x > 15).mean() * 100)
+    ).reset_index()
+
+    col_a, col_b = st.columns(2)
+
+    with col_a:
+        st.subheader("Distribución de tiempo idle")
+        fig1 = px.histogram(df_idle, x='idle_min', nbins=40,
+                           labels={'idle_min': 'Minutos idle'},
+                           color_discrete_sequence=['steelblue'])
+        fig1.add_vline(x=df_idle['idle_min'].median(), line_color='black',
+                      annotation_text=f"Mediana: {df_idle['idle_min'].median():.1f}m")
+        fig1.add_vline(x=15, line_dash='dash', line_color='red',
+                      annotation_text='15 min')
+        fig1.update_layout(height=300, showlegend=False)
+        st.plotly_chart(fig1, use_container_width=True)
+
+    with col_b:
+        st.subheader("Idle mediano por hora")
+        colores = ['tomato' if m > 15 else
+                  'orange' if m > 10 else 'steelblue'
+                  for m in por_hora['mediana']]
+        fig2 = px.bar(por_hora, x='hora', y='mediana',
+                     labels={'hora': 'Hora', 'mediana': 'Mediana idle (min)'},
+                     color_discrete_sequence=['steelblue'])
+        fig2.update_traces(marker_color=colores)
+        fig2.add_hline(y=15, line_dash='dash', line_color='red',
+                      annotation_text='15 min')
+        fig2.add_hline(y=10, line_dash='dash', line_color='orange',
+                      annotation_text='10 min')
+        fig2.update_layout(height=300)
+        st.plotly_chart(fig2, use_container_width=True)
+
+    col_c, col_d = st.columns(2)
+
+    with col_c:
+        st.subheader("% gaps > 15 min por hora")
+        colores3 = ['tomato' if p > 30 else 'steelblue'
+                   for p in por_hora['pct_15']]
+        fig3 = px.bar(por_hora, x='hora', y='pct_15',
+                     labels={'hora': 'Hora', 'pct_15': '% gaps > 15 min'})
+        fig3.update_traces(marker_color=colores3)
+        fig3.add_hline(y=por_hora['pct_15'].mean(), line_dash='dash',
+                      line_color='red',
+                      annotation_text=f"Promedio: {por_hora['pct_15'].mean():.1f}%")
+        fig3.update_layout(height=300)
+        st.plotly_chart(fig3, use_container_width=True)
+
+    with col_d:
+        st.subheader("Idle a lo largo del tiempo")
+        colores4 = ['tomato' if v > 15 else
+                   'orange' if v > 10 else 'steelblue'
+                   for v in df_idle['idle_min']]
+        fig4 = go.Figure()
+        fig4.add_trace(go.Scatter(
+            x=df_idle['fecha'], y=df_idle['idle_min'],
+            mode='markers',
+            marker=dict(color=colores4, size=5, opacity=0.5)
+        ))
+        fig4.add_hline(y=15, line_dash='dash', line_color='red',
+                      annotation_text='15 min')
+        fig4.update_layout(height=300,
+                          xaxis_title='Fecha',
+                          yaxis_title='Idle (min)',
+                          showlegend=False)
+        st.plotly_chart(fig4, use_container_width=True)
+
+    # Nota interpretativa
+    st.markdown("---")
+    st.caption("""
+    **Interpretación:** La mediana operacional es ~2 min. 
+    Gaps > 15 min fuera de horas de pausa (9am, 3pm) merecen atención.
+    Gaps de ~60 min corresponden al almuerzo con pedido abierto.
+    """)
